@@ -13,6 +13,9 @@ x-backend-env: &bot-env
   MONGO_PORT: ${MONGO_PORT}
   MONGO_USER: ${MONGO_USER}
   MONGO_PASS: ${MONGO_PASS}
+  WEAVIATE_URL: ${WEAVIATE_URL:-http://weaviate:8080}
+  WEAVIATE_API_KEY: ${WEAVIATE_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY}
 
 services:
   backend:
@@ -42,6 +45,7 @@ services:
       - redis
       - rabbitmq
       - mongodb
+      - weaviate
     restart: always
     networks:
       - network
@@ -93,8 +97,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
-      mongodb:
-        condition: service_healthy
     networks:
       - network
       
@@ -110,6 +112,7 @@ services:
       - mongo-data:/data/db
     networks:
       - network
+    command: mongod --quiet --logpath /dev/null
 
   mongo-express:
     image: mongo-express:latest
@@ -124,6 +127,26 @@ services:
       - mongodb
     networks:
       - network
+      
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.30.2
+    container_name: weaviate
+    ports:
+      - "8080:8080"
+    environment:
+      <<: *bot-env
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      DEFAULT_VECTORIZER_MODULE: 'none'
+      ENABLE_MODULES: 'text2vec-openai'
+      OPENAI_APIKEY: ${OPENAI_API_KEY}
+      CLUSTER_HOSTNAME: 'node1'
+    volumes:
+      - weaviate-data:/var/lib/weaviate
+    networks:
+      - network
+    restart: always
 
 networks:
   network:
@@ -132,4 +155,6 @@ networks:
 
 volumes:
   mongo-data:
+    driver: local
+  weaviate-data:
     driver: local
