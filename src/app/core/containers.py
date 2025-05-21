@@ -14,6 +14,10 @@ from src.app.core.config import settings
 from src.app.integrations.redis import RedisService
 from src.app.integrations.llm.openai import OpenaiService
 from src.app.integrations.llm.yandexgpt import YandexService
+from src.app.integrations.mygenetics_api import MyGeneticsClient
+from src.app.integrations.weaviate_client import WeaviateClient
+from src.app.services.intent_service import IntentService
+from src.app.services.vector_storage_service import VectorStorageService
 
 
 class Container(containers.DeclarativeContainer):
@@ -54,6 +58,27 @@ class Container(containers.DeclarativeContainer):
         OpenaiService,
         llm_client=openai_client,
         model=settings.openai.OPENAI_DEFAULT_MODEL,
+    )
+
+    intent_service = providers.Factory(
+        IntentService,
+        llm_client=openai_client,
+        redis_service=redis_service,
+    )
+
+    mygenetics_client = providers.Singleton(
+        MyGeneticsClient,
+    )
+
+    weaviate_client = providers.Singleton(
+        WeaviateClient,
+        url=settings.weaviate.WEAVIATE_URL,
+        api_key=settings.openai.OPENAI_API_KEY,
+    )
+
+    vector_storage_service = providers.Factory(
+        VectorStorageService,
+        weaviate_client=weaviate_client,
     )
 
     bot = providers.Factory(

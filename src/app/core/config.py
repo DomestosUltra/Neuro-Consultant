@@ -67,6 +67,12 @@ class MongoDBSettings(BaseSettings):
     MONGO_PASS: str = os.getenv("MONGO_PASS", "example")
 
 
+class WeaviateSettings(BaseSettings):
+    WEAVIATE_URL: str = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
+    WEAVIATE_API_KEY: str | None = os.getenv("OPENAI_API_KEY")
+    WEAVIATE_BATCH_SIZE: int = int(os.getenv("WEAVIATE_BATCH_SIZE", "100"))
+
+
 class Settings(BaseSettings):
     app: AppSettings = AppSettings()
     redis: RedisSettings = RedisSettings()
@@ -76,6 +82,7 @@ class Settings(BaseSettings):
     bot: BotSettings = BotSettings()
     yandex: YandexGPTSettings = YandexGPTSettings()
     mongodb: MongoDBSettings = MongoDBSettings()
+    weaviate: WeaviateSettings = WeaviateSettings()
 
 
 settings = Settings()
