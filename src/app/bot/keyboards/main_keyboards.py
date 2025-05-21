@@ -75,12 +75,6 @@ def get_auth_stage_keyboard(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="✅ Данные введены",
-                        callback_data="auth_credentials_entered",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
                         text="❌ Отмена", callback_data="auth_cancel"
                     )
                 ],
@@ -92,19 +86,26 @@ def get_auth_stage_keyboard(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="✅ Код введен",
-                        callback_data="auth_codelab_entered",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
                         text="⏭ Пропустить", callback_data="auth_skip_codelab"
-                    )
-                ],
-                [
+                    ),
                     InlineKeyboardButton(
                         text="❌ Отмена", callback_data="auth_cancel"
-                    )
+                    ),
+                ],
+            ]
+        )
+    elif stage == "authenticated":
+        # Клавиатура для авторизованного пользователя
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔄 Обновить токен",
+                        callback_data="auth_renew_token",
+                    ),
+                    InlineKeyboardButton(
+                        text="🚪 Выйти", callback_data="auth_logout"
+                    ),
                 ],
             ]
         )
@@ -131,7 +132,7 @@ def get_auth_prompt_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🔑 Авторизоваться", callback_data="auth_prompt"
+                    text="🔑 Войти", callback_data="auth_prompt"
                 )
             ]
         ]

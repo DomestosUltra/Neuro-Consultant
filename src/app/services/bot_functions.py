@@ -9,6 +9,7 @@ from src.app.integrations.mygenetics_api import (
     MyGeneticsClient,
     MyGeneticsCredentials,
 )
+from src.app.services.vector_storage_service import VectorStorageService
 from src.app.core.containers import Container
 from src.app.core.config import settings
 
@@ -301,6 +302,9 @@ async def authenticate_with_mygenetics(
         Provide[Container.mygenetics_client]
     ),
     redis_service: RedisService = Depends(Provide[Container.redis_service]),
+    vector_storage_service: VectorStorageService = Depends(
+        Provide[Container.vector_storage_service]
+    ),
 ) -> Tuple[bool, Optional[Dict[str, Any]]]:
     """
     Аутентификация пользователя в MyGenetics и получение данных по лабкоду
@@ -326,6 +330,23 @@ async def authenticate_with_mygenetics(
         codelab_data = await mygenetics_client.get_codelab_data(codelab)
         if codelab_data:
             await save_user_codelab(user_id, codelab)
+
+            # Сохраняем генетический отчет в векторное хранилище для последующего поиска
+            try:
+                await vector_storage_service.store_genetic_report(
+                    user_id=user_id,
+                    codelab=codelab,
+                    report_data=codelab_data,
+                    embedding=None,  # Позволяем Weaviate создать вектор автоматически
+                )
+                logger.info(
+                    f"Генетический отчет для пользователя {user_id} сохранен в векторной базе данных"
+                )
+            except Exception as e:
+                logger.error(
+                    f"Ошибка при сохранении генетического отчета в векторную базу: {e}"
+                )
+                # Продолжаем работу даже при ошибке векторного хранилища
 
     return True, codelab_data
 
@@ -464,3 +485,123 @@ async def log_interaction(
         logger.info(f"User interaction saved to database: user_id={user_id}")
     except Exception as e:
         logger.error(f"Failed to save user interaction to database: {e}")
+
+
+@inject
+async def renew_mygenetics_token(
+    user_id: str,
+    mygenetics_client: MyGeneticsClient = Depends(
+        Provide[Container.mygenetics_client]
+    ),
+    redis_service: RedisService = Depends(Provide[Container.redis_service]),
+) -> bool:
+    """
+    Обновляет токен авторизации пользователя в MyGenetics
+
+    Args:
+        user_id: ID пользователя
+
+    Returns:
+        bool: Успешно ли обновлен токен
+    """
+    # Проверяем, авторизован ли пользователь
+    if not await is_user_authenticated(user_id):
+        logger.warning(
+            f"Попытка обновить токен для неавторизованного пользователя {user_id}"
+        )
+        return False
+
+    # Получаем учетные данные пользователя
+    credentials = await get_user_credentials(user_id)
+    if not credentials:
+        logger.warning(f"Не найдены учетные данные для пользователя {user_id}")
+        return False
+
+    # Пробуем обновить токен
+    result = await mygenetics_client.renew_token()
+
+    # Если не удалось обновить токен, пробуем заново аутентифицироваться
+    if not result:
+        logger.info(
+            f"Не удалось обновить токен для пользователя {user_id}, пробуем заново аутентифицироваться"
+        )
+        result = await mygenetics_client.authenticate(
+            credentials.login, credentials.password
+        )
+
+        if not result:
+            # Если и повторная аутентификация не удалась, сбрасываем статус авторизации
+            await set_user_authentication(user_id, False)
+            logger.warning(
+                f"Не удалось аутентифицироваться для пользователя {user_id}, сбрасываем статус авторизации"
+            )
+            return False
+
+    logger.info(f"Токен успешно обновлен для пользователя {user_id}")
+    return True
+
+
+@inject
+async def logout_from_mygenetics(
+    user_id: str,
+    mygenetics_client: MyGeneticsClient = Depends(
+        Provide[Container.mygenetics_client]
+    ),
+    redis_service: RedisService = Depends(Provide[Container.redis_service]),
+) -> bool:
+    """
+    Выполняет выход из аккаунта MyGenetics
+
+    Args:
+        user_id: ID пользователя
+
+    Returns:
+        bool: Успешно ли выполнен выход
+    """
+    # Проверяем, авторизован ли пользователь
+    if not await is_user_authenticated(user_id):
+        logger.warning(
+            f"Попытка выйти из аккаунта для неавторизованного пользователя {user_id}"
+        )
+        return False
+
+    # Выполняем выход из аккаунта
+    result = await mygenetics_client.logout()
+
+    # Сбрасываем статус авторизации в любом случае
+    await set_user_authentication(user_id, False)
+
+    # Удаляем учетные данные
+    await delete_user_credentials(user_id)
+
+    logger.info(
+        f"Выход из аккаунта MyGenetics для пользователя {user_id}: {result}"
+    )
+    return True
+
+
+@inject
+async def save_temp_login(
+    user_id: str,
+    login: str,
+    redis_service: RedisService = Depends(Provide[Container.redis_service]),
+) -> None:
+    """
+    Временно сохраняет логин пользователя во время процесса авторизации
+    """
+    key = f"tg_user:{user_id}:temp_login"
+    await redis_service.set(key, login, ex=300)  # 5 минут
+    logger.info(f"Временно сохранен логин для пользователя {user_id}")
+
+
+@inject
+async def get_temp_login(
+    user_id: str,
+    redis_service: RedisService = Depends(Provide[Container.redis_service]),
+) -> Optional[str]:
+    """
+    Получает временно сохраненный логин пользователя
+    """
+    key = f"tg_user:{user_id}:temp_login"
+    login = await redis_service.get(key)
+    return login

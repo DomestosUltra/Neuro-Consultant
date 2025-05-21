@@ -45,6 +45,13 @@ from src.app.services.bot_functions import (
     get_auth_stage,
     set_auth_stage,
     authenticate_with_mygenetics,
+    get_user_credentials,
+    get_user_codelab,
+    renew_mygenetics_token,
+    logout_from_mygenetics,
+    save_temp_login,
+    get_temp_login,
+    save_user_codelab,
 )
 
 logger = logging.getLogger(__name__)
@@ -132,68 +139,108 @@ async def auth_callback(
     action: str = callback.data.split("_")[1]
     user_id = str(callback.from_user.id)
 
-    if action == "prompt":
-        # Пользователь нажал на кнопку "Авторизоваться" в конце сообщения
+    if action == "prompt" or action == "enter_credentials":
+        # Пользователь нажал на кнопку авторизации
         await start_auth_process(user_id)
-        await set_auth_stage(user_id, "waiting_credentials")
+        await set_auth_stage(user_id, "waiting_login")
 
         await callback.message.answer(
             "<b>Авторизация в MyGenetics</b> 🔐\n\n"
-            "Авторизация позволит использовать данные вашего отчета по генетическому тесту "
-            "для более персонализированных рекомендаций.\n\n"
-            "<i>Выберите действие:</i>",
-            reply_markup=get_auth_keyboard(),
+            "Введите ваш логин (email) от MyGenetics:",
+            reply_markup=get_auth_stage_keyboard("credentials"),
         )
 
         await log_interaction(
             callback.from_user.id,
             callback.from_user.username or "",
-            "Запрос авторизации из промпта",
+            "Запрос авторизации",
             "Начат процесс авторизации",
         )
         return
 
-    elif action == "enter_credentials":
-        # Пользователь нажал на кнопку "Ввести логин/пароль"
-        await set_auth_stage(user_id, "waiting_credentials")
-
-        await callback.message.answer(
-            "<b>Ввод учетных данных MyGenetics</b> 🔒\n\n"
-            "Отправьте мне свой логин и пароль от сервиса MyGenetics в формате:\n"
-            "<code>логин:пароль</code>\n\n"
-            "<i>Например: example@mail.ru:mypassword</i>\n\n"
-            "<i>Ваши данные надежно защищены и используются только для получения доступа к генетическим отчетам.</i>",
-            reply_markup=get_auth_stage_keyboard("credentials"),
-        )
-
-    elif action == "credentials_entered":
-        # Пользователь указал, что ввел данные (уже должны быть в предыдущем сообщении)
-        await callback.message.answer(
-            "<b>Теперь введите лабкод</b> 📋\n\n"
-            "Отправьте лабкод, указанный в отчете MyGenetics, чтобы бот мог использовать данные из вашего отчета.\n\n"
-            "<i>Если у вас нет лабкода, вы можете пропустить этот шаг.</i>",
-            reply_markup=get_auth_stage_keyboard("codelab"),
-        )
-
-        await set_auth_stage(user_id, "waiting_codelab")
-
-    elif action == "codelab_entered" or action == "skip_codelab":
-        # Авторизация завершена, мы должны были сохранить данные на предыдущих шагах
-        # Пока просто установим флаг авторизации
+    elif action == "skip_codelab":
+        # Пользователь пропускает ввод лабкода
         await set_user_authentication(user_id, True)
         await cancel_auth_process(user_id)
 
         await callback.message.answer(
             "<b>Авторизация успешна!</b> ✅\n\n"
-            "Теперь ваши генетические данные будут использованы для более персонализированных рекомендаций.\n"
-            "Продолжайте задавать вопросы, как обычно."
+            "Вы вошли в аккаунт MyGenetics.",
+            reply_markup=None,
         )
 
         await log_interaction(
             callback.from_user.id,
             callback.from_user.username or "",
             "Завершение авторизации",
-            "Пользователь авторизован успешно",
+            "Пользователь авторизован (без лабкода)",
+        )
+
+    elif action == "renew_token":
+        # Пользователь запросил обновление токена
+        await callback.message.edit_text(
+            "<b>Обновление токена...</b> 🔄", reply_markup=None
+        )
+
+        # Обновляем токен
+        result = await renew_mygenetics_token(user_id)
+
+        if result:
+            # Токен успешно обновлен
+            credentials = await get_user_credentials(user_id)
+            codelab = await get_user_codelab(user_id)
+
+            auth_details = (
+                f"логин: {credentials.login}"
+                if credentials
+                else "данные не найдены"
+            )
+            codelab_details = (
+                f"лабкод: {codelab}" if codelab else "лабкод не установлен"
+            )
+
+            await callback.message.edit_text(
+                "<b>Токен обновлен</b> ✅\n\n"
+                f"{auth_details}\n"
+                f"{codelab_details}",
+                reply_markup=get_auth_stage_keyboard("authenticated"),
+            )
+        else:
+            # Не удалось обновить токен
+            await callback.message.edit_text(
+                "<b>Ошибка обновления токена</b> ❌\n\n"
+                "Авторизуйтесь заново через /auth",
+                reply_markup=None,
+            )
+
+            # Сбрасываем статус авторизации
+            await set_user_authentication(user_id, False)
+
+        await log_interaction(
+            callback.from_user.id,
+            callback.from_user.username or "",
+            "Обновление токена",
+            f"Результат: {result}",
+        )
+
+    elif action == "logout":
+        # Пользователь запросил выход из аккаунта
+        await callback.message.edit_text(
+            "<b>Выход из аккаунта...</b> 🚪", reply_markup=None
+        )
+
+        # Выполняем выход
+        result = await logout_from_mygenetics(user_id)
+
+        await callback.message.edit_text(
+            "<b>Выход выполнен</b> ✅", reply_markup=None
+        )
+
+        await log_interaction(
+            callback.from_user.id,
+            callback.from_user.username or "",
+            "Выход из аккаунта",
+            f"Результат: {result}",
         )
 
     elif action == "cancel":
@@ -201,15 +248,14 @@ async def auth_callback(
         await cancel_auth_process(user_id)
 
         await callback.message.answer(
-            "<b>Авторизация отменена</b> ❌\n"
-            "Вы можете продолжать использовать бота без авторизации или авторизоваться позже с помощью команды /auth."
+            "<b>Авторизация отменена</b> ❌", reply_markup=None
         )
 
         await log_interaction(
             callback.from_user.id,
             callback.from_user.username or "",
             "Отмена авторизации",
-            "Процесс авторизации отменен пользователем",
+            "Процесс отменен пользователем",
         )
 
 
@@ -221,7 +267,9 @@ async def handle_message(
     mygenetics_client: MyGeneticsClient = Depends(
         Provide[Container.mygenetics_client]
     ),
-    vector_storage_service=Depends(Provide[Container.vector_storage_service]),
+    vector_storage_service: VectorStorageService = Depends(
+        Provide[Container.vector_storage_service]
+    ),
     openai_client: AsyncOpenAI = Depends(Provide[Container.openai_client]),
 ):
     if not await check_rate_limit(message.from_user.id):
@@ -238,48 +286,60 @@ async def handle_message(
     if await is_auth_process_active(user_id):
         auth_stage = await get_auth_stage(user_id)
 
-        if auth_stage == "waiting_credentials":
-            # Ожидаем ввод логина и пароля
-            # Регулярное выражение для поиска логина:пароля
-            credentials_regex = r"(.+?):(.+)"
-            credentials_match = re.match(credentials_regex, user_query)
+        if auth_stage == "waiting_login":
+            # Ожидаем ввод логина (email)
+            # Проверка формата email не требуется на данном этапе
+            # Сохраняем логин во временном хранилище
+            await save_temp_login(user_id, user_query)
 
-            if credentials_match:
-                # Пользователь ввел логин и пароль в правильном формате
-                login, password = credentials_match.groups()
+            # Переходим к следующему этапу - ввод пароля
+            await set_auth_stage(user_id, "waiting_password")
 
-                # Проверяем учетные данные в MyGenetics API
-                auth_result, _ = await authenticate_with_mygenetics(
-                    user_id, login, password
-                )
+            await message.answer(
+                "<b>Логин сохранен</b> ✅\n\n" "Теперь введите ваш пароль:",
+                reply_markup=get_auth_stage_keyboard("credentials"),
+            )
+            return
 
-                if auth_result:
-                    # Успешная авторизация
-                    await message.answer(
-                        "<b>Учетные данные успешно проверены!</b> ✅\n\n"
-                        "Теперь введите лабкод, указанный в отчете MyGenetics, чтобы бот мог использовать данные из вашего отчета.\n\n"
-                        "<i>Если у вас нет лабкода, вы можете пропустить этот шаг.</i>",
-                        reply_markup=get_auth_stage_keyboard("codelab"),
-                    )
+        elif auth_stage == "waiting_password":
+            # Ожидаем ввод пароля
+            # Получаем сохраненный логин
+            login = await get_temp_login(user_id)
 
-                    await set_auth_stage(user_id, "waiting_codelab")
-                else:
-                    # Неверные учетные данные
-                    await message.answer(
-                        "<b>Не удалось проверить учетные данные</b> ❌\n\n"
-                        "Пожалуйста, проверьте логин и пароль и попробуйте еще раз.\n"
-                        "Отправьте данные в формате: <code>логин:пароль</code>",
-                        reply_markup=get_auth_stage_keyboard("credentials"),
-                    )
-            else:
-                # Пользователь ввел данные в неправильном формате
+            if not login:
+                # Если логин не найден, начинаем процесс заново
+                await set_auth_stage(user_id, "waiting_login")
                 await message.answer(
-                    "<b>Неверный формат учетных данных</b> ❌\n\n"
-                    "Пожалуйста, отправьте логин и пароль в формате:\n"
-                    "<code>логин:пароль</code>",
+                    "<b>Ошибка авторизации</b> ❌\n\n"
+                    "Сессия истекла. Введите логин повторно:",
                     reply_markup=get_auth_stage_keyboard("credentials"),
                 )
+                return
 
+            # Проверяем учетные данные в MyGenetics API
+            auth_result, _ = await authenticate_with_mygenetics(
+                user_id, login, user_query
+            )
+
+            if auth_result:
+                # Успешная авторизация
+                await message.answer(
+                    "<b>Авторизация успешна!</b> ✅\n\n"
+                    "Введите лабкод для доступа к генетическим данным\n"
+                    "<i>или нажмите кнопку пропустить</i>",
+                    reply_markup=get_auth_stage_keyboard("codelab"),
+                )
+
+                await set_auth_stage(user_id, "waiting_codelab")
+            else:
+                # Неверные учетные данные
+                await message.answer(
+                    "<b>Ошибка авторизации</b> ❌\n\n"
+                    "Неверный логин или пароль.\n\n"
+                    "Введите логин заново:",
+                    reply_markup=get_auth_stage_keyboard("credentials"),
+                )
+                await set_auth_stage(user_id, "waiting_login")
             return
 
         elif auth_stage == "waiting_codelab":
@@ -293,10 +353,9 @@ async def handle_message(
             await save_user_codelab(user_id, user_query)
 
             await message.answer(
-                "<b>Авторизация успешно завершена!</b> ✅\n\n"
-                f"Лабкод <b>{user_query}</b> сохранен.\n\n"
-                "Теперь ваши генетические данные будут использованы для более персонализированных рекомендаций.\n"
-                "Продолжайте задавать вопросы, как обычно."
+                "<b>Лабкод сохранен</b> ✅\n\n"
+                "Ваши генетические данные будут использованы для персонализированных рекомендаций.",
+                reply_markup=None,
             )
 
             await cancel_auth_process(user_id)
@@ -306,7 +365,7 @@ async def handle_message(
                 message.from_user.id,
                 message.from_user.username or "",
                 "Ввод лабкода",
-                "Авторизация завершена успешно",
+                "Авторизация завершена",
             )
 
             return
@@ -338,9 +397,9 @@ async def handle_message(
     # embedding = await generate_embedding(user_query, openai_client)
 
     # Store the user query in vector database
-    await vector_storage_service.store_user_query(
-        user_id, user_query, embedding=None
-    )
+    # await vector_storage_service.store_user_query(
+    #     user_id, user_query, embedding=None
+    # )
 
     # Проверяем, есть ли у пользователя заблокированный intent
     intent_locked = await check_intent_lock(user_id)

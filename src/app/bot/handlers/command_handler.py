@@ -7,6 +7,7 @@ from src.app.bot.keyboards.main_keyboards import (
     get_model_keyboard,
     get_agent_keyboard,
     get_auth_keyboard,
+    get_auth_stage_keyboard,
 )
 
 from src.app.services.bot_functions import (
@@ -108,31 +109,30 @@ async def cmd_auth(message: Message):
         )
 
         await message.answer(
-            "<b>Вы уже авторизованы</b> ✅\n\n"
-            f"<b>Данные аккаунта MyGenetics:</b>\n"
-            f"• {auth_details}\n"
-            f"• {codelab_details}\n\n"
-            "Ваши генетические данные будут использованы при ответах на вопросы."
+            "<b>Вы авторизованы</b> ✅\n\n"
+            f"{auth_details}\n"
+            f"{codelab_details}",
+            reply_markup=get_auth_stage_keyboard("authenticated"),
         )
         return
 
     # Начинаем процесс авторизации
     await start_auth_process(user_id)
-    await set_auth_stage(user_id, "waiting_credentials")
+    await set_auth_stage(user_id, "waiting_login")
 
     response_text = (
         "<b>Авторизация в MyGenetics</b> 🔐\n\n"
-        "Авторизация позволит использовать данные вашего отчета по генетическому тесту "
-        "для более персонализированных рекомендаций.\n\n"
-        "<i>Выберите действие:</i>"
+        "Введите ваш логин (email) от MyGenetics:"
     )
-    await message.answer(response_text, reply_markup=get_auth_keyboard())
+    await message.answer(
+        response_text, reply_markup=get_auth_stage_keyboard("credentials")
+    )
 
     await log_interaction(
         message.from_user.id,
         message.from_user.username or "",
         "/auth",
-        "Запрос авторизации.",
+        "Запрос авторизации",
     )
 
 

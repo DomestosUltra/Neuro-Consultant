@@ -80,12 +80,78 @@ class LLMTaskHandler(BaseTaskHandler):
             system_prompt = INTENT_PROMPTS.get(intent, SYSTEM_PROMPT)
             logger.info(f"Using {intent} prompt for user {user_id}")
 
+            # Дополняем промпт релевантной информацией из базы знаний
+            additional_context = []
+
+            # Если запрос связан с часто задаваемыми вопросами, ищем ответы в FAQ
+            try:
+                faq_entries = (
+                    await self.vector_storage_service.find_faq_entries(
+                        rephrased_query, limit=2
+                    )
+                )
+                if faq_entries:
+                    faq_context = (
+                        "\n\nИнформация из часто задаваемых вопросов:\n"
+                    )
+                    for entry in faq_entries:
+                        faq_context += f"Вопрос: {entry['question']}\nОтвет: {entry['answer']}\n\n"
+                    additional_context.append(faq_context)
+                    logger.info(
+                        f"Added {len(faq_entries)} FAQ entries to the context for user {user_id}"
+                    )
+            except Exception as e:
+                logger.error(f"Error retrieving FAQ entries: {e}")
+
+            # Ищем релевантные статьи из базы знаний
+            try:
+                knowledge_articles = (
+                    await self.vector_storage_service.find_knowledge_articles(
+                        rephrased_query, limit=2
+                    )
+                )
+                if knowledge_articles:
+                    kb_context = "\n\nРелевантная информация из базы знаний:\n"
+                    for article in knowledge_articles:
+                        kb_context += f"Тема: {article['title']}\nСодержание: {article['content']}\n\n"
+                    additional_context.append(kb_context)
+                    logger.info(
+                        f"Added {len(knowledge_articles)} knowledge base articles to the context for user {user_id}"
+                    )
+            except Exception as e:
+                logger.error(f"Error retrieving knowledge base articles: {e}")
+
             # Если пользователь авторизован, добавляем в промпт информацию о генетических данных
             if is_authenticated:
-                system_prompt += "\n\nУ вас есть доступ к генетическим данным пользователя. Интегрируйте эту информацию в свои рекомендации."
-                logger.info(
-                    f"Добавлена информация о генетических данных для авторизованного пользователя {user_id}"
-                )
+                try:
+                    genetic_report = (
+                        await self.vector_storage_service.get_genetic_report(
+                            user_id
+                        )
+                    )
+                    if genetic_report:
+                        genetics_context = "\n\nИнформация из генетического отчета пользователя:\n"
+                        # В реальности здесь нужно будет извлечь ключевую информацию из отчета,
+                        # которая релевантна текущему запросу пользователя
+                        genetics_context += f"Лабкод пользователя: {genetic_report.get('codelab')}\n"
+
+                        # Можно добавить обработку report_data с извлечением нужных данных
+                        # Пример: report_data = genetic_report.get('report_data', {})
+                        # Извлекать и форматировать нужную информацию
+
+                        additional_context.append(genetics_context)
+                        logger.info(
+                            f"Added genetic report data to the context for user {user_id}"
+                        )
+                except Exception as e:
+                    logger.error(f"Error retrieving genetic report: {e}")
+                    additional_context.append(
+                        "\n\nУ вас есть доступ к генетическим данным пользователя. Интегрируйте эту информацию в свои рекомендации."
+                    )
+
+            # Добавляем дополнительный контекст к промпту
+            if additional_context:
+                system_prompt += "\n\n" + "\n".join(additional_context)
 
             response_text: str = await llm_service.get_response(
                 rephrased_query, system_prompt=system_prompt
@@ -97,28 +163,12 @@ class LLMTaskHandler(BaseTaskHandler):
             if show_auth_prompt and not is_authenticated:
                 auth_prompt = (
                     "\n\n<hr>\n"
-                    "<i>💡 Авторизуйтесь, чтобы получать персонализированные рекомендации "
-                    "на основе вашего генетического отчета!</i>"
+                    "<i>💡 Авторизуйтесь для персональных рекомендаций на основе генетического отчета</i>"
                 )
                 html_response_text += auth_prompt
 
-            # Store the message history in vector database
-            try:
-                # Сохраняем в векторную базу без предоставления эмбеддингов
-                # Weaviate сам создаст эмбеддинги через text2vec-openai
-                await self.vector_storage_service.store_message_history(
-                    user_id=user_id,
-                    query=user_query,
-                    response=response_text,
-                    intent=intent,
-                    embedding=None,  # Не предоставляем эмбеддинги, пусть Weaviate сам их создаст
-                )
-                logger.info(
-                    f"Stored message history in vector database for user {user_id}"
-                )
-            except Exception as ve:
-                logger.error(f"Error storing message in vector database: {ve}")
-                # Continue even if vector storage fails
+            # Сохраняем запрос пользователя в векторной базе (уже сделано в обработчике сообщений)
+            # Историю диалогов не храним в Weaviate, как указано в требованиях
 
             await self.bot.delete_message(
                 chat_id=chat_id, message_id=waiting_message_id

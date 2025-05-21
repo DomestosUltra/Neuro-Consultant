@@ -147,6 +147,23 @@ services:
     networks:
       - network
     restart: always
+    
+  # weaviate-ui:
+  #   image: naaive/weaviate-ui:latest
+  #   container_name: weaviate-ui
+  #   ports:
+  #     - "8091:3000"
+  #   environment:
+  #     WEAVIATE_URL: http://weaviate:8080
+  #     WEAVIATE_API_KEYS: ${WEAVIATE_API_KEY:-}
+  #     TLS_VERIFY: 'false'
+  #     TLS_HOSTNAME_VERIFY: 'false'
+  #     PORT: 3000
+  #   depends_on:
+  #     - weaviate
+  #   networks:
+  #     - network
+  #   restart: always
 
 networks:
   network:
